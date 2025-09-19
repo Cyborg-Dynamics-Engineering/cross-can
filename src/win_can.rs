@@ -97,9 +97,7 @@ impl CanInterface for WindowsCan {
             }
         };
 
-        let serialized =
-            serde_json::to_string(&frame).map_err(|e| IoError::new(ErrorKind::InvalidInput, e))?;
-        writer.write_all(serialized.as_bytes()).await?;
+        writer.write_all(bytemuck::bytes_of(&frame)).await?;
         writer.write_all(b"\n").await?;
         writer.flush().await?;
         Ok(())

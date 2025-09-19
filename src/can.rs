@@ -3,20 +3,28 @@
 ///
 /// Provides an abstracted CanFrame data struct.
 ///
-use serde::{Deserialize, Serialize};
+///
+///
+use bytemuck::{Pod, Zeroable};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CanFrame {
     id: u32,
+    dlc: u8,
+    flags: u8, // bit 0 = extended, bit 1 = rtr, bit 2 = error
+    timestamp: u64,
     data: [u8; 8],
-    dlc: usize,
-    is_extended: bool,
-    is_rtr: bool,
-    is_error: bool,
-    timestamp: Option<u64>,
 }
 
+unsafe impl Pod for CanFrame {}
+unsafe impl Zeroable for CanFrame {}
+
 impl CanFrame {
+    const FLAG_EXTENDED: u8 = 0b0000_0001;
+    const FLAG_RTR: u8 = 0b0000_0010;
+    const FLAG_ERROR: u8 = 0b0000_0100;
+
     /// Create a new Standard ID CAN data frame
     pub fn new(id: u32, data: &[u8]) -> Result<Self, &'static str> {
         Self::validate_id(id, false)?;
@@ -25,12 +33,10 @@ impl CanFrame {
         buf[..data.len()].copy_from_slice(data);
         Ok(Self {
             id,
+            dlc: data.len() as u8,
+            flags: 0,
+            timestamp: 0,
             data: buf,
-            dlc: data.len(),
-            is_extended: false,
-            is_rtr: false,
-            is_error: false,
-            timestamp: None,
         })
     }
 
@@ -42,12 +48,10 @@ impl CanFrame {
         buf[..data.len()].copy_from_slice(data);
         Ok(Self {
             id,
+            dlc: data.len() as u8,
+            flags: Self::FLAG_EXTENDED,
+            timestamp: 0,
             data: buf,
-            dlc: data.len(),
-            is_extended: true,
-            is_rtr: false,
-            is_error: false,
-            timestamp: None,
         })
     }
 
@@ -57,14 +61,16 @@ impl CanFrame {
             return Err("RTR frame DLC must be <= 8");
         }
         Self::validate_id(id, is_extended)?;
+        let mut flags = Self::FLAG_RTR;
+        if is_extended {
+            flags |= Self::FLAG_EXTENDED;
+        }
         Ok(Self {
             id,
+            dlc: dlc as u8,
+            flags,
+            timestamp: 0,
             data: [0u8; 8],
-            dlc,
-            is_extended,
-            is_rtr: true,
-            is_error: false,
-            timestamp: None,
         })
     }
 
@@ -75,21 +81,23 @@ impl CanFrame {
         }
         Ok(Self {
             id,
-            data: [0u8; 8],
             dlc: 0,
-            is_extended: false,
-            is_rtr: false,
-            is_error: true,
-            timestamp: None,
+            flags: Self::FLAG_ERROR,
+            timestamp: 0,
+            data: [0u8; 8],
         })
     }
 
     pub fn set_timestamp(&mut self, ts: Option<u64>) {
-        self.timestamp = ts;
+        self.timestamp = ts.unwrap_or(0);
     }
 
     pub fn timestamp(&self) -> Option<u64> {
-        self.timestamp
+        if self.timestamp == 0 {
+            None
+        } else {
+            Some(self.timestamp)
+        }
     }
 
     fn validate_id(id: u32, extended: bool) -> Result<(), &'static str> {
@@ -113,23 +121,30 @@ impl CanFrame {
         }
     }
 
+    // --- Getters ---
+
     pub fn id(&self) -> u32 {
         self.id
     }
+
     pub fn data(&self) -> &[u8] {
-        &self.data[..self.dlc]
+        &self.data[..self.dlc as usize]
     }
+
     pub fn dlc(&self) -> usize {
-        self.dlc
+        self.dlc as usize
     }
+
     pub fn is_extended(&self) -> bool {
-        self.is_extended
+        (self.flags & Self::FLAG_EXTENDED) != 0
     }
+
     pub fn is_rtr(&self) -> bool {
-        self.is_rtr
+        (self.flags & Self::FLAG_RTR) != 0
     }
+
     pub fn is_error(&self) -> bool {
-        self.is_error
+        (self.flags & Self::FLAG_ERROR) != 0
     }
 }
 
